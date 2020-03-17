@@ -31,6 +31,11 @@ class Connection extends AbstractConnection implements ConnectionInterface
     use PrototypeTrait;
 
     /**
+     * @var int
+     */
+    const ETIMEOUT = 110;
+
+    /**
      * @var Client
      */
     protected $connection;
