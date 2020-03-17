@@ -31,6 +31,11 @@ class Connection extends AbstractConnection implements ConnectionInterface
     use PrototypeTrait;
 
     /**
+     * @var int
+     */
+    const ETIMEOUT = 110;
+
+    /**
      * @var Client
      */
     protected $connection;
@@ -130,10 +135,17 @@ class Connection extends AbstractConnection implements ConnectionInterface
 
     /**
      * @return string|bool
+     * @throws RpcClientException
      */
     public function recv()
     {
-        return $this->connection->recv((float)-1);
+        $data = $this->connection->recv();
+        if ($this->connection->errCode == self::ETIMEOUT){
+            // Call reconnect() method to close the current tcp client and create a new tcp client
+            $this->reconnect();
+            throw new RpcClientException(sprintf("Read timeout!"));
+        }
+        return $data;
     }
 
     /**
