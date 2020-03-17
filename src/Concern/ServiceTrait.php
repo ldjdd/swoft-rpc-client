@@ -16,6 +16,7 @@ use Swoft\Rpc\Client\Pool;
 use Swoft\Rpc\Client\ReferenceRegister;
 use Swoft\Rpc\Protocol;
 use Swoft\Stdlib\Helper\JsonHelper;
+use Swoole\Exception;
 
 /**
  * Class ServiceTrait
@@ -48,41 +49,50 @@ trait ServiceTrait
         /* @var Connection $connection */
         $connection = $pool->getConnection();
         $connection->setRelease(true);
-        $packet = $connection->getPacket();
+        $released = false;
 
-        // Ext data
-        $ext = $connection->getClient()->getExtender()->getExt();
+        try{
+            $packet = $connection->getPacket();
 
-        $protocol = Protocol::new($version, $interfaceClass, $methodName, $params, $ext);
-        $data     = $packet->encode($protocol);
-        $message  = sprintf(
-            'Rpc call failed.interface=%s method=%s pool=%s version=%s',
-            $interfaceClass, $methodName, $poolName, $version
-        );
+            // Ext data
+            $ext = $connection->getClient()->getExtender()->getExt();
 
-        $result = $this->sendAndRecv($connection, $data, $message);
-        $connection->release();
-
-        $response = $packet->decodeResponse($result);
-        if ($response->getError() !== null) {
-            $code      = $response->getError()->getCode();
-            $message   = $response->getError()->getMessage();
-            $errorData = $response->getError()->getData();
-
-            // Record rpc error message
-            $errorMsg = sprintf(
-                'Rpc call error!code=%d message=%s data=%s pool=%s version=%s',
-                $code, $message, JsonHelper::encode($errorData), $poolName, $version
+            $protocol = Protocol::new($version, $interfaceClass, $methodName, $params, $ext);
+            $data     = $packet->encode($protocol);
+            $message  = sprintf(
+                'Rpc call failed.interface=%s method=%s pool=%s version=%s',
+                $interfaceClass, $methodName, $poolName, $version
             );
 
-            Error::log($errorMsg);
+            $result = $this->sendAndRecv($connection, $data, $message);
+            $connection->release();
+            $released = true;
+            $response = $packet->decodeResponse($result);
+            if ($response->getError() !== null) {
+                $code      = $response->getError()->getCode();
+                $message   = $response->getError()->getMessage();
+                $errorData = $response->getError()->getData();
 
-            // Only to throw message and code
-            throw new RpcResponseException($message, $code);
+                // Record rpc error message
+                $errorMsg = sprintf(
+                    'Rpc call error!code=%d message=%s data=%s pool=%s version=%s',
+                    $code, $message, JsonHelper::encode($errorData), $poolName, $version
+                );
+
+                Error::log($errorMsg);
+
+                // Only to throw message and code
+                throw new RpcResponseException($message, $code);
+            }
+
+            return $response->getResult();
+        } catch (\Exception $exception) {
+            // Call `$connection->release()` to push the connection back to channel
+            if (!$released) {
+                $connection->release();
+            }
+            throw $exception;
         }
-
-        return $response->getResult();
-
     }
 
     /**
@@ -111,7 +121,12 @@ trait ServiceTrait
             return $this->sendAndRecv($connection, $data, $message, true);
         }
 
-        $result = $connection->recv();
+        try{
+            $result = $connection->recv();
+        } catch (\Exception $exception) {
+            throw new RpcClientException(sprintf("%s %s", $message, $exception->getMessage()));
+        }
+
         if ($result === false || empty($result)) {
             if ($reconnect) {
                 throw new RpcClientException($message);

@@ -130,10 +130,22 @@ class Connection extends AbstractConnection implements ConnectionInterface
 
     /**
      * @return string|bool
+     * @throws RpcClientException
      */
     public function recv()
     {
-        return $this->connection->recv((float)-1);
+        $setting = $this->client->getSetting();
+        $read_timeout = (float)-1;
+        if(isset($setting['read_timeout'])) {
+            $read_timeout = (float)$setting['read_timeout'];
+        }
+        $data = $this->connection->recv($read_timeout);
+        if ($this->connection->errCode == self::ETIMEOUT){
+            // Call reconnect() method to close the current tcp client and create a new tcp client
+            $this->reconnect();
+            throw new RpcClientException(sprintf("Read timeout(%ss)!", $read_timeout));
+        }
+        return $data;
     }
 
     /**
